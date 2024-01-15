@@ -22,10 +22,8 @@ contract OceanosOracle is IPriceCalculator, OwnableUpgradeable {
         _;
     }
 
-    function initialize(address _primaryPriceCalculator) external initializer {
+    function initialize() external initializer {
         __Ownable_init();
-
-        primaryPriceCalculator = IPriceCalculator(_primaryPriceCalculator);
 
         isReporter[msg.sender] = true;
         THRESHOLD = 15 minutes;
@@ -46,6 +44,10 @@ contract OceanosOracle is IPriceCalculator, OwnableUpgradeable {
         }
 
         return price;
+    }
+
+    function setThreshold(uint256 _threshold) external onlyOwner {
+        THRESHOLD = _threshold;
     }
 
     function setPrice(address asset, uint256 price) external onlyReporter {
