@@ -176,6 +176,14 @@ abstract contract PoolBase {
         uint256 mintAmount
     ) external payable virtual {
         if (assetAmount > 0) {
+            if (collateralIncentivePool != address(0)) {
+                try
+                    IMultiIncentive(collateralIncentivePool).refreshReward(
+                        msg.sender
+                    )
+                {} catch {}
+            }
+
             _safeTransferIn(msg.sender, assetAmount);
             collateralAmount[msg.sender] += assetAmount;
 
@@ -214,7 +222,11 @@ abstract contract PoolBase {
         );
 
         // try to call minterIncentivePool to refresh reward before update mint status
-        try IMultiIncentive(mintIncentivePool).refreshReward(_user) {} catch {}
+        if (mintIncentivePool != address(0)) {
+            try
+                IMultiIncentive(mintIncentivePool).refreshReward(_user)
+            {} catch {}
+        }
 
         uint256 mintFeeAmount = (_mintAmount * mintFee) / 10000;
 
@@ -238,9 +250,12 @@ abstract contract PoolBase {
         uint256 _amount
     ) internal virtual {
         // try to call minterIncentivePool to refresh reward before update mint status
-        try
-            IMultiIncentive(mintIncentivePool).refreshReward(_onBehalfOf)
-        {} catch {}
+
+        if (mintIncentivePool != address(0)) {
+            try
+                IMultiIncentive(mintIncentivePool).refreshReward(_onBehalfOf)
+            {} catch {}
+        }
 
         if (_amount > 0) {
             ocUsd.transferFrom(_user, address(this), _amount);
@@ -257,6 +272,12 @@ abstract contract PoolBase {
             collateralAmount[_user] >= _amount,
             "Withdraw amount exceeds deposited amount."
         );
+
+        if (collateralIncentivePool != address(0)) {
+            try
+                IMultiIncentive(collateralIncentivePool).refreshReward(_user)
+            {} catch {}
+        }
 
         collateralAmount[_user] -= _amount;
         _safeTransferOut(_user, _amount);
@@ -284,7 +305,6 @@ abstract contract PoolBase {
         uint256 assetAmount = (_repayAmount * _adjustDecimals()) / assetPrice;
 
         // 2. current mode
-
         uint256 currentPoolCollateralRatio = ((totalCollateralAmount() *
             assetPrice *
             10000) /
@@ -298,6 +318,11 @@ abstract contract PoolBase {
 
         assetAmount = (assetAmount * (10000 - redemptionFee)) / 10000;
 
+        if (collateralIncentivePool != address(0)) {
+            try
+                IMultiIncentive(collateralIncentivePool).refreshReward(_target)
+            {} catch {}
+        }
         collateralAmount[_target] -= assetAmount;
         _safeTransferOut(msg.sender, assetAmount);
 
@@ -346,8 +371,15 @@ abstract contract PoolBase {
             10000;
 
         uint256 reducedAsset = assetAmount + bonusAmount;
-        collateralAmount[onBehalfOf] -= reducedAsset;
 
+        if (collateralIncentivePool != address(0)) {
+            try
+                IMultiIncentive(collateralIncentivePool).refreshReward(
+                    onBehalfOf
+                )
+            {} catch {}
+        }
+        collateralAmount[onBehalfOf] -= reducedAsset;
         _safeTransferOut(msg.sender, reducedAsset - protocolAmount);
         _safeTransferOut(feeReceiver, protocolAmount);
 
