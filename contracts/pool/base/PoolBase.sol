@@ -41,7 +41,7 @@ abstract contract PoolBase {
 
     uint256 public liquidationCollateralRatio; // 10000 = 100%, default 120%
 
-    uint256 public liquidationBonus; // 11000 = 10% of collateral plus, default 8%
+    uint256 public liquidationBonus; // 11000 = 10% of collateral plus, default 20%
 
     uint256 public liquidationProtocolRatio; // 10000 = 100%, default 50%
 
@@ -66,21 +66,40 @@ abstract contract PoolBase {
 
         gov = msg.sender;
         feeReceiver = msg.sender;
+
+        emit SetGov(address(0), gov, block.timestamp);
+        emit SetFeeReceiver(address(0), feeReceiver, block.timestamp);
     }
 
     // ========= GOV FUNCTIONS =============== //
 
     function setGov(address _gov) external onlyGov {
+        require(_gov != address(0), "zero address");
+
+        emit SetGov(gov, _gov, block.timestamp);
+
         gov = _gov;
     }
 
     function setFeeReceiver(address _feeReceiver) external onlyGov {
+        require(_feeReceiver != address(0), "zero address");
+
+        emit SetFeeReceiver(feeReceiver, _feeReceiver, block.timestamp);
+
         feeReceiver = _feeReceiver;
     }
 
     function setPriceCalculator(
         IPriceCalculator _priceCalculator
     ) external onlyGov {
+        require(address(_priceCalculator) != address(0), "zero address");
+
+        emit SetPriceCalculator(
+            address(priceCalculator),
+            address(_priceCalculator),
+            block.timestamp
+        );
+
         priceCalculator = _priceCalculator;
     }
 
@@ -106,15 +125,41 @@ abstract contract PoolBase {
         liquidationCollateralRatio = _liquidationCollateralRatio;
         liquidationBonus = _liquidationBonus;
         liquidationProtocolRatio = _liquidationProtocolRatio;
+
+        emit SetPoolConfiguration(
+            _maxTotalMintAmount,
+            _minMintAmount,
+            _mintFee,
+            _normalRedemptionFee,
+            _protectionRedemptionFee,
+            _safeCollateralRatio,
+            _protectionCollateralRatio,
+            _liquidationCollateralRatio,
+            _liquidationBonus,
+            _liquidationProtocolRatio,
+            block.timestamp
+        );
     }
 
     function setMintIncentivePool(address _mintIncentivePool) external onlyGov {
+        emit SetMintIncentivePool(
+            mintIncentivePool,
+            _mintIncentivePool,
+            block.timestamp
+        );
+
         mintIncentivePool = _mintIncentivePool;
     }
 
     function setCollateralIncentivePool(
         address _collateralIncentivePool
     ) external onlyGov {
+        emit SetCollateralIncentivePool(
+            collateralIncentivePool,
+            _collateralIncentivePool,
+            block.timestamp
+        );
+
         collateralIncentivePool = _collateralIncentivePool;
     }
 
@@ -249,7 +294,10 @@ abstract contract PoolBase {
         address _onBehalfOf,
         uint256 _amount
     ) internal virtual {
-        // try to call minterIncentivePool to refresh reward before update mint status
+        require(
+            borrowedAmount[_onBehalfOf] >= _amount,
+            "repay amount exceeds borrowed amount"
+        );
 
         if (mintIncentivePool != address(0)) {
             try
@@ -313,8 +361,8 @@ abstract contract PoolBase {
 
         uint256 redemptionFee = currentPoolCollateralRatio >=
             protectionCollateralRatio
-            ? protectionRedemptionFee
-            : normalRedemptionFee;
+            ? normalRedemptionFee
+            : protectionRedemptionFee;
 
         assetAmount = (assetAmount * (10000 - redemptionFee)) / 10000;
 
@@ -464,6 +512,43 @@ abstract contract PoolBase {
         uint256 repayAmount,
         uint256 collateralAmount,
         uint256 protocolAmount,
+        uint256 timestamp
+    );
+
+    event SetGov(address prevAddress, address newAddress, uint256 timestamp);
+    event SetFeeReceiver(
+        address prevAddress,
+        address newAddress,
+        uint256 timestamp
+    );
+    event SetPriceCalculator(
+        address prevAddress,
+        address newAddress,
+        uint256 timestamp
+    );
+    event SetMintIncentivePool(
+        address prevAddress,
+        address newAddress,
+        uint256 timestamp
+    );
+
+    event SetCollateralIncentivePool(
+        address prevAddress,
+        address newAddress,
+        uint256 timestamp
+    );
+
+    event SetPoolConfiguration(
+        uint256 maxTotalMintAmount,
+        uint256 minMintAmount,
+        uint256 mintFee,
+        uint256 normalRedemptionFee,
+        uint256 protectionRedemptionFee,
+        uint256 safeCollateralRatio,
+        uint256 protectionCollateralRatio,
+        uint256 liquidationCollateralRatio,
+        uint256 liquidationBonus,
+        uint256 liquidationProtocolRatio,
         uint256 timestamp
     );
 
