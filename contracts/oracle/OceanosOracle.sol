@@ -22,10 +22,8 @@ contract OceanosOracle is IPriceCalculator, OwnableUpgradeable {
         _;
     }
 
-    function initialize(address _primaryPriceCalculator) external initializer {
+    function initialize() external initializer {
         __Ownable_init();
-
-        primaryPriceCalculator = IPriceCalculator(_primaryPriceCalculator);
 
         isReporter[msg.sender] = true;
         THRESHOLD = 15 minutes;
@@ -48,8 +46,16 @@ contract OceanosOracle is IPriceCalculator, OwnableUpgradeable {
         return price;
     }
 
+    function setThreshold(uint256 _threshold) external onlyOwner {
+        THRESHOLD = _threshold;
+
+        emit SetThreshold(_threshold);
+    }
+
     function setPrice(address asset, uint256 price) external onlyReporter {
         references[asset] = ReferenceData(price, block.timestamp);
+
+        emit SetPrice(asset, price);
     }
 
     function setPrices(
@@ -58,16 +64,27 @@ contract OceanosOracle is IPriceCalculator, OwnableUpgradeable {
     ) external onlyReporter {
         for (uint256 i = 0; i < assets.length; i++) {
             references[assets[i]] = ReferenceData(prices[i], block.timestamp);
+
+            emit SetPrice(assets[i], prices[i]);
         }
     }
 
     function setReporter(address reporter, bool enabled) external onlyOwner {
         isReporter[reporter] = enabled;
+
+        emit SetReporter(reporter, enabled);
     }
 
     function setPrimaryPriceCalculator(
         address _primaryPriceCalculator
     ) external onlyOwner {
         primaryPriceCalculator = IPriceCalculator(_primaryPriceCalculator);
+
+        emit SetPrimaryPriceCalculator(_primaryPriceCalculator);
     }
+
+    event SetThreshold(uint256 threshold);
+    event SetPrice(address indexed asset, uint256 price);
+    event SetReporter(address indexed reporter, bool enabled);
+    event SetPrimaryPriceCalculator(address indexed primaryPriceCalculator);
 }
