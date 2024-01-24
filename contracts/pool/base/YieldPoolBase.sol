@@ -10,10 +10,10 @@ abstract contract YieldPoolBase is PoolBase {
     uint256 public totalCollateralStored;
 
     function _initialize(
-        IOcUSD _ocUsd,
+        IMintBurnERC20 _usdAsset,
         IERC20 _collateral
     ) internal virtual override {
-        super._initialize(_ocUsd, _collateral);
+        super._initialize(_usdAsset, _collateral);
     }
 
     function totalCollateralAmount() public view override returns (uint256) {
