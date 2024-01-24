@@ -41,4 +41,9 @@ interface IMultiIncentive {
     );
     event RewardsDurationUpdated(address token, uint256 newDuration);
     event Recovered(address token, uint256 amount);
+    event SetGov(address indexed gov);
+    event SetRewardsDistributor(
+        address indexed rewardsToken,
+        address indexed rewardsDistributor
+    );
 }

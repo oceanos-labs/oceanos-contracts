@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 
 pragma solidity ^0.8.17;
-import "./IOcUSD.sol";
+import "./IMintBurnERC20.sol";
 
 interface IPoolBase {
-    function ocUsd() external view returns (IOcUSD);
+    function usdAsset() external view returns (IMintBurnERC20);
 
-    function poolIssuedOcUSD() external view returns (uint256);
+    function poolIssuedUSD() external view returns (uint256);
 
     function totalCollateralAmount() external view returns (uint256);
 
