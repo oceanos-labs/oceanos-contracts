@@ -4,20 +4,25 @@ pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../../interfaces/IMultiIncentive.sol";
-import "../../interfaces/IOcUSD.sol";
+import "../../interfaces/IMintBurnERC20.sol";
 import "../../interfaces/IERC20Detailed.sol";
 import "../../interfaces/IPriceCalculator.sol";
 
 /// @title PoolBase
 /// @author oceanos
-/// @notice Base contract for depositing collateral and minting ocUSD
+/// @notice Base contract for depositing collateral and minting usdAsset
 abstract contract PoolBase {
-    IOcUSD public ocUsd;
+    IMintBurnERC20 public usdAsset;
     IERC20 public collateralAsset;
 
     mapping(address => uint256) public collateralAmount; // collateral deposited by user
-    mapping(address => uint256) public borrowedAmount; // ocUSD borrowed by user (including fee)
-    uint256 public poolIssuedOcUSD; // total ocUSD minted by pool
+    mapping(address => uint256) public borrowedAmount; // usdAsset borrowed by user (including fee)
+    mapping(address => uint256) public feeUnpaid;
+    mapping(address => uint256) public feeDebt;
+    uint256 public feeUpdatedAt;
+    uint256 public feePerShare;
+
+    uint256 public poolIssuedUSD; // total usdAsset minted by pool
 
     IPriceCalculator public priceCalculator;
     address public gov;
@@ -25,11 +30,13 @@ abstract contract PoolBase {
 
     // ========= POOL CONFIGURATION ===============//
 
-    uint256 public maxTotalMintAmount; // maximum poolIssuedOcUSD, default type(uint256 public ).max
+    uint256 public maxTotalMintAmount; // maximum poolIssuedUSD, default type(uint256 public ).max
 
     uint256 public minMintAmount; // minimum mint amount, default 1
 
     uint256 public mintFee; // 10000 = 100%, default 0.1%
+
+    uint256 public mintInterest; // 10000 = 100%, default 0%
 
     uint256 public normalRedemptionFee; // 10000 = 100%, default 1%
 
@@ -60,8 +67,11 @@ abstract contract PoolBase {
 
     // ========= INITIALIZER =============== //
 
-    function _initialize(IOcUSD _ocUsd, IERC20 _collateral) internal virtual {
-        ocUsd = _ocUsd;
+    function _initialize(
+        IMintBurnERC20 _usdAsset,
+        IERC20 _collateral
+    ) internal virtual {
+        usdAsset = _usdAsset;
         collateralAsset = _collateral;
 
         gov = msg.sender;
@@ -107,6 +117,7 @@ abstract contract PoolBase {
         uint256 _maxTotalMintAmount,
         uint256 _minMintAmount,
         uint256 _mintFee,
+        uint256 _mintInterest,
         uint256 _normalRedemptionFee,
         uint256 _protectionRedemptionFee,
         uint256 _safeCollateralRatio,
@@ -115,6 +126,7 @@ abstract contract PoolBase {
         uint256 _liquidationBonus,
         uint256 _liquidationProtocolRatio
     ) external onlyGov {
+        _updateFee();
         maxTotalMintAmount = _maxTotalMintAmount;
         minMintAmount = _minMintAmount;
         mintFee = _mintFee;
@@ -125,11 +137,13 @@ abstract contract PoolBase {
         liquidationCollateralRatio = _liquidationCollateralRatio;
         liquidationBonus = _liquidationBonus;
         liquidationProtocolRatio = _liquidationProtocolRatio;
+        mintInterest = _mintInterest;
 
         emit SetPoolConfiguration(
             _maxTotalMintAmount,
             _minMintAmount,
             _mintFee,
+            _mintInterest,
             _normalRedemptionFee,
             _protectionRedemptionFee,
             _safeCollateralRatio,
@@ -183,8 +197,18 @@ abstract contract PoolBase {
         address user
     ) external view virtual returns (uint256) {
         return ((collateralAmount[user] * getAssetPrice() * 10000) /
-            borrowedAmount[user] /
+            getBorrowedOf(user) /
             _adjustDecimals());
+    }
+
+    function getBorrowedOf(address user) public view virtual returns (uint256) {
+        return borrowedAmount[user] + feeUnpaid[user] + getUserFee(user);
+    }
+
+    function getUserFee(address user) public view returns (uint256) {
+        uint256 _feePerShare = feePerShare + (_newFee() * 1e18) / poolIssuedUSD;
+
+        return (borrowedAmount[user] * _feePerShare) / 1e18 - feeDebt[user];
     }
 
     // ========= INTERNAL =============== //
@@ -196,7 +220,7 @@ abstract contract PoolBase {
     ) internal view virtual returns (bool) {
         require(
             ((collateralAmount[user] * price * 10000) /
-                borrowedAmount[user] /
+                getBorrowedOf(user) /
                 _adjustDecimals()) >= safeCollateralRatio,
             "collateral ratio is Below safeCollateralRatio"
         );
@@ -212,6 +236,20 @@ abstract contract PoolBase {
             decimals = IERC20Detailed(address(collateralAsset)).decimals();
         }
         return 10 ** uint256(decimals);
+    }
+
+    function _updateFee() internal {
+        if (block.timestamp > feeUpdatedAt && poolIssuedUSD > 0) {
+            feePerShare = feePerShare + (_newFee() * 1e18) / poolIssuedUSD;
+        }
+        feeUpdatedAt = block.timestamp;
+    }
+
+    function _newFee() internal view returns (uint256) {
+        return
+            (poolIssuedUSD * mintInterest * (block.timestamp - feeUpdatedAt)) /
+            (86400 * 365) /
+            10000;
     }
 
     // ========= MUTABLES =============== //
@@ -258,13 +296,15 @@ abstract contract PoolBase {
         uint256 _assetPrice
     ) internal virtual {
         require(
-            poolIssuedOcUSD + _mintAmount <= maxTotalMintAmount,
+            poolIssuedUSD + _mintAmount <= maxTotalMintAmount,
             "mint amount exceeds maximum mint amount"
         );
         require(
             _mintAmount >= minMintAmount,
             "mint amount is below minimum mint amount"
         );
+
+        _updateFee();
 
         // try to call minterIncentivePool to refresh reward before update mint status
         if (mintIncentivePool != address(0)) {
@@ -273,20 +313,30 @@ abstract contract PoolBase {
             {} catch {}
         }
 
+        if (borrowedAmount[_user] > 0) {
+            uint256 generatedFee = getUserFee(_user);
+            feeUnpaid[_user] += generatedFee;
+
+            emit FeeAccrued(_user, generatedFee, block.timestamp);
+        }
+
         uint256 mintFeeAmount = (_mintAmount * mintFee) / 10000;
 
         uint256 debtMintAmount = _mintAmount + mintFeeAmount;
 
         borrowedAmount[_user] += debtMintAmount; // increase debt
-        poolIssuedOcUSD += debtMintAmount; // increase pool debt
+        poolIssuedUSD += debtMintAmount; // increase pool debt
 
-        ocUsd.mint(_user, _mintAmount); // mint ocUsd excluding fee
-        ocUsd.mint(feeReceiver, mintFeeAmount); // mint ocUsd fee to feeReceiver
+        usdAsset.mint(_user, _mintAmount); // mint usdAsset excluding fee
+        usdAsset.mint(feeReceiver, mintFeeAmount); // mint usdAsset fee to feeReceiver
+
+        feeDebt[_user] = (borrowedAmount[_user] * feePerShare) / 1e18; // update feeDebt
 
         // check if user is in safe zone
         _inSafeZone(_user, _assetPrice);
 
-        emit Mint(_user, debtMintAmount, mintFeeAmount, block.timestamp);
+        emit Mint(_user, _mintAmount, block.timestamp);
+        emit FeeAccrued(_user, mintFeeAmount, block.timestamp);
     }
 
     function _repay(
@@ -295,22 +345,48 @@ abstract contract PoolBase {
         uint256 _amount
     ) internal virtual {
         require(
-            borrowedAmount[_onBehalfOf] >= _amount,
+            getBorrowedOf(_onBehalfOf) >= _amount,
             "repay amount exceeds borrowed amount"
         );
-
         if (mintIncentivePool != address(0)) {
             try
                 IMultiIncentive(mintIncentivePool).refreshReward(_onBehalfOf)
             {} catch {}
         }
 
-        if (_amount > 0) {
-            ocUsd.transferFrom(_user, address(this), _amount);
-            ocUsd.burn(address(this), _amount);
-            borrowedAmount[_onBehalfOf] -= _amount;
-            poolIssuedOcUSD -= _amount;
+        _updateFee();
+
+        uint256 generatedFee = getUserFee(_onBehalfOf);
+        if (generatedFee > 0) {
+            feeUnpaid[_onBehalfOf] += generatedFee;
+
+            emit FeeAccrued(_onBehalfOf, generatedFee, block.timestamp);
         }
+
+        // 1. if there is feeUnpaid, repay fee first
+        if (feeUnpaid[_onBehalfOf] > 0) {
+            uint256 repayFee = _amount >= feeUnpaid[_onBehalfOf]
+                ? feeUnpaid[_onBehalfOf]
+                : _amount;
+
+            // deduct fee unpaid , can be zero;
+            feeUnpaid[_onBehalfOf] -= repayFee;
+            usdAsset.transferFrom(_user, feeReceiver, repayFee);
+
+            _amount -= repayFee;
+        }
+
+        if (_amount > 0) {
+            usdAsset.transferFrom(_user, address(this), _amount);
+            usdAsset.burn(address(this), _amount);
+
+            borrowedAmount[_onBehalfOf] -= _amount;
+            poolIssuedUSD -= _amount;
+        }
+
+        feeDebt[_onBehalfOf] =
+            (borrowedAmount[_onBehalfOf] * feePerShare) /
+            1e18;
 
         emit Repay(_user, _onBehalfOf, _amount, block.timestamp);
     }
@@ -336,7 +412,7 @@ abstract contract PoolBase {
         emit Withdraw(_user, _amount, block.timestamp);
     }
 
-    /// @notice redemption func ocUsd to get collateral asset selecting any collateral provider with fee
+    /// @notice redemption func usdAsset to get collateral asset selecting any collateral provider with fee
     /// @param _target address of collateral provider
     /// @param _repayAmount amount of collateral asset to repay on behalf of _target
     /// @return uint256 that returns amount of collateral asset to get
@@ -346,7 +422,7 @@ abstract contract PoolBase {
     ) external virtual returns (uint256) {
         require(_repayAmount > 0, " > 0 ");
 
-        // 1. repay ocUsd
+        // 1. repay usdAsset
         _repay(msg.sender, _target, _repayAmount);
 
         uint256 assetPrice = getAssetPrice();
@@ -356,7 +432,7 @@ abstract contract PoolBase {
         uint256 currentPoolCollateralRatio = ((totalCollateralAmount() *
             assetPrice *
             10000) /
-            poolIssuedOcUSD /
+            poolIssuedUSD /
             _adjustDecimals());
 
         uint256 redemptionFee = currentPoolCollateralRatio >=
@@ -383,7 +459,12 @@ abstract contract PoolBase {
         );
 
         if (borrowedAmount[_target] > 0) {
-            _inSafeZone(_target, assetPrice);
+            require(
+                ((collateralAmount[_target] * assetPrice * 10000) /
+                    getBorrowedOf(_target) /
+                    _adjustDecimals()) >= liquidationCollateralRatio,
+                "collateral ratio is Below liquidationCollateralRatio, try liquidation"
+            );
         }
 
         return assetAmount;
@@ -397,7 +478,7 @@ abstract contract PoolBase {
         uint256 onBehalfOfCollateralRatio = (collateralAmount[onBehalfOf] *
             assetPrice *
             10000) /
-            borrowedAmount[onBehalfOf] /
+            getBorrowedOf(onBehalfOf) /
             _adjustDecimals();
         require(
             onBehalfOfCollateralRatio < liquidationCollateralRatio,
@@ -409,9 +490,9 @@ abstract contract PoolBase {
             "a max of 50% collateral can be liquidated"
         );
 
-        uint256 ocUsdAmount = (assetAmount * assetPrice) / _adjustDecimals();
+        uint256 usdAssetAmount = (assetAmount * assetPrice) / _adjustDecimals();
 
-        _repay(msg.sender, onBehalfOf, ocUsdAmount);
+        _repay(msg.sender, onBehalfOf, usdAssetAmount);
 
         uint256 bonusAmount = (assetAmount * liquidationBonus) / 10000;
 
@@ -434,7 +515,7 @@ abstract contract PoolBase {
         emit Liquidate(
             onBehalfOf,
             msg.sender,
-            ocUsdAmount,
+            usdAssetAmount,
             reducedAsset,
             protocolAmount,
             block.timestamp
@@ -485,9 +566,9 @@ abstract contract PoolBase {
         uint256 collateralAmount,
         uint256 timestamp
     );
-    event Mint(
+    event Mint(address indexed account, uint256 mintAmount, uint256 timestamp);
+    event FeeAccrued(
         address indexed account,
-        uint256 totalMintAmount,
         uint256 feeAmount,
         uint256 timestamp
     );
@@ -501,7 +582,7 @@ abstract contract PoolBase {
     event Redemption(
         address account,
         address indexed provider,
-        uint256 ocUsdAmount,
+        uint256 usdAssetAmount,
         uint256 assetAmount,
         uint256 timestamp
     );
@@ -542,6 +623,7 @@ abstract contract PoolBase {
         uint256 maxTotalMintAmount,
         uint256 minMintAmount,
         uint256 mintFee,
+        uint256 mintInterest,
         uint256 normalRedemptionFee,
         uint256 protectionRedemptionFee,
         uint256 safeCollateralRatio,
