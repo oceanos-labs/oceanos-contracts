@@ -24,7 +24,10 @@ abstract contract MultiIncentiveBase is IMultiIncentive {
     address public gov;
 
     function _initialize(address _gov) internal virtual {
+        require(gov == address(0), "zero address");
         gov = _gov;
+
+        emit SetGov(_gov);
     }
 
     modifier onlyGov() {
@@ -39,7 +42,10 @@ abstract contract MultiIncentiveBase is IMultiIncentive {
     }
 
     function setGov(address _gov) external onlyGov {
+        require(_gov != address(0), "zero address");
         gov = _gov;
+
+        emit SetGov(_gov);
     }
 
     function addReward(
@@ -48,6 +54,8 @@ abstract contract MultiIncentiveBase is IMultiIncentive {
         uint256 _rewardsDuration
     ) public onlyGov {
         require(rewardData[_rewardsToken].rewardsDuration == 0);
+        require(_rewardsDistributor != address(0), "zero address");
+        require(_rewardsDuration > 0, "zero duration");
         rewardTokens.push(_rewardsToken);
         rewardData[_rewardsToken].rewardsDistributor = _rewardsDistributor;
         rewardData[_rewardsToken].rewardsDuration = _rewardsDuration;
@@ -114,7 +122,11 @@ abstract contract MultiIncentiveBase is IMultiIncentive {
         address _rewardsToken,
         address _rewardsDistributor
     ) external onlyGov {
+        require(_rewardsDistributor != address(0), "zero address");
+
         rewardData[_rewardsToken].rewardsDistributor = _rewardsDistributor;
+
+        emit SetRewardsDistributor(_rewardsToken, _rewardsDistributor);
     }
 
     function getReward() public lock updateReward(msg.sender) {

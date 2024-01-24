@@ -25,7 +25,7 @@ contract MinterMultiIncentive is MultiIncentiveBase, Initializable {
     }
 
     function getTotalAmount() public view override returns (uint256) {
-        return issuedPool.poolIssuedOcUSD();
+        return issuedPool.poolIssuedUSD();
     }
 
     function refreshReward(address account) external updateReward(account) {}
