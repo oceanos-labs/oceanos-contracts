@@ -10,11 +10,11 @@ contract ShoebillYieldPool is Initializable, YieldPoolBase {
     IShoebillERC20 public sbToken;
 
     function initialize(
-        IOcUSD _ocUsd,
+        IMintBurnERC20 _usdAsset,
         IERC20 _collateral,
         IShoebillERC20 _sbToken
     ) external initializer {
-        _initialize(_ocUsd, _collateral);
+        _initialize(_usdAsset, _collateral);
 
         sbToken = _sbToken;
     }
@@ -37,7 +37,18 @@ contract ShoebillYieldPool is Initializable, YieldPoolBase {
     }
 
     function claimYield() external override {
-        // TODO : claim yield
+        // 1. Claim yield from Supply yield
+        uint256 includingIncreased = sbToken.balanceOfUnderlying(address(this));
+
+        uint256 yield = includingIncreased - totalCollateralStored;
+
+        // dust
+        if (yield > 1000) {
+            // withdraw from Supply yield
+            sbToken.redeemUnderlying(yield - 1000);
+            // transfer to feeReceiver
+            _safeTransferOut(feeReceiver, yield - 1000);
+        }
     }
 
     uint256[50] private __gap;
