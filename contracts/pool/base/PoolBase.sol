@@ -240,8 +240,18 @@ abstract contract PoolBase {
 
     function _updateFee() internal {
         if (block.timestamp > feeUpdatedAt && poolIssuedUSD > 0) {
+            // 1. mint interest
+            uint256 generatedFee = _newFee();
+            if (generatedFee > 0) {
+                usdAsset.mint(feeReceiver, generatedFee);
+
+                emit FeeAccrued(feeReceiver, generatedFee, block.timestamp);
+            }
+
+            // 2. update feePerShare
             feePerShare = feePerShare + (_newFee() * 1e18) / poolIssuedUSD;
         }
+
         feeUpdatedAt = block.timestamp;
     }
 
