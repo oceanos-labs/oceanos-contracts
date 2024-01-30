@@ -24,7 +24,7 @@ abstract contract MultiIncentiveBase is IMultiIncentive {
     address public gov;
 
     function _initialize(address _gov) internal virtual {
-        require(gov == address(0), "zero address");
+        require(gov != address(0), "zero address");
         gov = _gov;
 
         emit SetGov(_gov);
